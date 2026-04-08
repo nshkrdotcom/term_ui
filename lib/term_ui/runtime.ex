@@ -497,7 +497,7 @@ defmodule TermUI.Runtime do
 
     # Terminal.hide_cursor() was already called in setup_terminal_and_buffers.
     # Sync backend_state so hide_cursor/show_cursor idempotency checks are accurate.
-    backend_state = %{backend_state | cursor_visible: false}
+    backend_state = sync_cursor_hidden(backend_state)
 
     {:raw, backend, backend_state, nil, true, buffer_manager, {cols, rows}}
   end
@@ -1225,6 +1225,12 @@ defmodule TermUI.Runtime do
   defp do_render(state) do
     # Render if backend is available (TTY backend works even without terminal_started)
     if state.backend do
+      # Hide the old cursor position before drawing the new frame. This prevents
+      # the terminal cursor from visibly sitting at the previous location while
+      # the next frame is being rendered.
+      {:ok, hidden_backend_state} = state.backend.hide_cursor(state.backend_state)
+      state = %{state | backend_state: hidden_backend_state}
+
       # Call view on root component with error handling
       %{module: module, state: component_state} = Map.get(state.components, :root)
 
@@ -1260,6 +1266,7 @@ defmodule TermUI.Runtime do
       new_backend_state =
         case cursor_hint do
           {row, col} ->
+            {row, col} = clamp_cursor_hint({row, col}, new_backend_state)
             {:ok, s} = state.backend.move_cursor(new_backend_state, {row, col})
             {:ok, s} = state.backend.show_cursor(s)
             s
@@ -1345,6 +1352,22 @@ defmodule TermUI.Runtime do
         cells_in_row ++ acc
     end
   end
+
+  defp sync_cursor_hidden(%{cursor_visible: _} = backend_state) do
+    %{backend_state | cursor_visible: false}
+  end
+
+  defp sync_cursor_hidden(backend_state), do: backend_state
+
+  defp clamp_cursor_hint({row, col}, %{size: {max_rows, max_cols}})
+       when is_integer(max_rows) and max_rows > 0 and is_integer(max_cols) and max_cols > 0 do
+    {
+      max(1, min(row, max_rows)),
+      max(1, min(col, max_cols))
+    }
+  end
+
+  defp clamp_cursor_hint({row, col}, _backend_state), do: {max(1, row), max(1, col)}
 
   # Gets changed cells by comparing current and previous buffers.
   # Returns cells in the format expected by Backend.draw_cells/2: [{position, cell_data}]
