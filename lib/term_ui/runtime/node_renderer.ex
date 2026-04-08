@@ -31,16 +31,24 @@ defmodule TermUI.Runtime.NodeRenderer do
              apply_parent_style_to_cell: 2,
              copy_viewport_region: 2}
 
+  # Process-dictionary key used to propagate cursor hints up through the render tree
+  # without changing every private render_node/5 clause's return type.
+  @cursor_hint_key :term_ui_cursor_hint
+
   @doc """
   Renders a node tree to the buffer starting at the given position.
 
-  Returns the bounds of the rendered content as {width, height}.
+  Returns `{width, height, cursor_pos}` where `cursor_pos` is either
+  `{row, col}` (1-indexed absolute screen coordinates) if the tree contains
+  a `cursor_hint` node, or `nil` if no hint was emitted.
   """
   @spec render_to_buffer(term(), BufferManager.t() | pid(), pos_integer(), pos_integer()) ::
-          {non_neg_integer(), non_neg_integer()}
+          {non_neg_integer(), non_neg_integer(), {pos_integer(), pos_integer()} | nil}
   def render_to_buffer(node, buffer_manager, start_row \\ 1, start_col \\ 1) do
+    Process.put(@cursor_hint_key, nil)
     buffer = BufferManager.get_current_buffer(buffer_manager)
-    render_node(node, buffer, start_row, start_col, nil)
+    {w, h} = render_node(node, buffer, start_row, start_col, nil)
+    {w, h, Process.get(@cursor_hint_key)}
   end
 
   @doc """
@@ -48,12 +56,16 @@ defmodule TermUI.Runtime.NodeRenderer do
 
   This is used for TTY mode where we create temporary buffers per frame.
 
-  Returns the bounds of the rendered content as {width, height}.
+  Returns `{width, height, cursor_pos}` where `cursor_pos` is either
+  `{row, col}` (1-indexed absolute screen coordinates) if the tree contains
+  a `cursor_hint` node, or `nil` if no hint was emitted.
   """
   @spec render_to_buffer_direct(term(), Buffer.t(), pos_integer(), pos_integer()) ::
-          {non_neg_integer(), non_neg_integer()}
+          {non_neg_integer(), non_neg_integer(), {pos_integer(), pos_integer()} | nil}
   def render_to_buffer_direct(node, buffer, start_row \\ 1, start_col \\ 1) do
-    render_node(node, buffer, start_row, start_col, nil)
+    Process.put(@cursor_hint_key, nil)
+    {w, h} = render_node(node, buffer, start_row, start_col, nil)
+    {w, h, Process.get(@cursor_hint_key)}
   end
 
   # Handle RenderNode structs
@@ -184,6 +196,22 @@ defmodule TermUI.Runtime.NodeRenderer do
       end
 
     render_node(content, buffer, buf_row, buf_col, effective_style)
+  end
+
+  # Handle cursor_hint nodes — zero-size; record absolute position in process dict
+  # so render_to_buffer/render_to_buffer_direct can return it to the caller.
+  # The hint uses 0-indexed offsets relative to the widget's render area:
+  #   absolute_row = start_row + hint_row
+  #   absolute_col = start_col + hint_col
+  defp render_node(
+         %RenderNode{type: :cursor_hint, cursor_pos: {rel_row, rel_col}},
+         _buffer,
+         row,
+         col,
+         _style
+       ) do
+    Process.put(@cursor_hint_key, {row + rel_row, col + rel_col})
+    {0, 0}
   end
 
   # Handle tuple-based render nodes from Elm.Helpers
@@ -395,8 +423,16 @@ defmodule TermUI.Runtime.NodeRenderer do
   end
 
   defp render_and_copy_viewport(temp_buffer, content, style, opts) do
+    # Sandbox cursor hints: a hint inside a viewport would be in temp-buffer
+    # space (not screen space), so we save and restore the outer hint to prevent
+    # viewport content from corrupting the screen-level cursor position.
+    saved_hint = Process.get(@cursor_hint_key)
+
     # Render content to temporary buffer
     render_node(content, temp_buffer, 1, 1, style)
+
+    # Restore outer cursor hint (discard any hint from viewport content)
+    Process.put(@cursor_hint_key, saved_hint)
 
     # Copy visible region to destination buffer
     copy_viewport_region(temp_buffer, opts)

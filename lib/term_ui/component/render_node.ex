@@ -37,7 +37,7 @@ defmodule TermUI.Component.RenderNode do
   alias TermUI.Renderer.Cell
   alias TermUI.Renderer.Style
 
-  @type node_type :: :text | :box | :stack | :empty | :cells
+  @type node_type :: :text | :box | :stack | :empty | :cells | :cursor_hint
 
   @typedoc "A cell with position information for the :cells node type"
   @type positioned_cell :: %{x: non_neg_integer(), y: non_neg_integer(), cell: Cell.t()}
@@ -51,7 +51,8 @@ defmodule TermUI.Component.RenderNode do
           direction: direction() | nil,
           width: non_neg_integer() | :auto | nil,
           height: non_neg_integer() | :auto | nil,
-          cells: [positioned_cell()] | nil
+          cells: [positioned_cell()] | nil,
+          cursor_pos: {non_neg_integer(), non_neg_integer()} | nil
         }
 
   defstruct type: :empty,
@@ -61,7 +62,8 @@ defmodule TermUI.Component.RenderNode do
             direction: nil,
             width: nil,
             height: nil,
-            cells: nil
+            cells: nil,
+            cursor_pos: nil
 
   # Dialyzer: Functions return specific struct types
   @dialyzer {:nowarn_function, empty: 0}
@@ -174,6 +176,35 @@ defmodule TermUI.Component.RenderNode do
       width: Keyword.get(opts, :width),
       height: Keyword.get(opts, :height)
     }
+  end
+
+  @doc """
+  Creates a cursor position hint node.
+
+  This node carries a zero-size hint to the renderer indicating where the
+  terminal cursor should be positioned after the current frame is drawn.
+  The position is **0-indexed, relative to the widget's render area**:
+  `{0, col}` means the first row of the widget, at column `col`.
+
+  The NodeRenderer translates this to absolute screen coordinates when it
+  encounters the node during rendering, storing the result so the Runtime
+  can reposition the terminal cursor after flushing each frame.
+
+  ## Examples
+
+      # Cursor at row 0, column 3 within the widget's area
+      RenderNode.cursor_hint({0, 3})
+
+      # Always emit alongside the visual cells so the terminal cursor blinks
+      RenderNode.stack(:vertical, [
+        RenderNode.cells(cells),
+        RenderNode.cursor_hint({0, cursor_col})
+      ])
+  """
+  @spec cursor_hint({non_neg_integer(), non_neg_integer()}) :: t()
+  def cursor_hint({row, col} = position)
+      when is_integer(row) and row >= 0 and is_integer(col) and col >= 0 do
+    %__MODULE__{type: :cursor_hint, cursor_pos: position}
   end
 
   @doc """

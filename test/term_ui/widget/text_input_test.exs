@@ -172,13 +172,28 @@ defmodule TermUI.Widget.TextInputTest do
     end
   end
 
+  # Extracts the cells node from a render result that may now be a stack
+  # (cells_node + cursor_hint_node).
+  defp extract_cells_node(%RenderNode{type: :cells} = node), do: node
+
+  defp extract_cells_node(%RenderNode{type: :stack, children: children}) do
+    Enum.find(children, &match?(%RenderNode{type: :cells}, &1))
+  end
+
+  defp extract_cursor_hint(%RenderNode{type: :stack, children: children}) do
+    Enum.find(children, &match?(%RenderNode{type: :cursor_hint}, &1))
+  end
+
+  defp extract_cursor_hint(_), do: nil
+
   describe "render/2" do
     test "renders value" do
       props = %{value: "Hello"}
       {:ok, state} = TextInput.init(props)
       result = TextInput.render(state, @area)
 
-      assert %RenderNode{type: :cells, cells: cells} = result
+      cells_node = extract_cells_node(result)
+      assert %RenderNode{type: :cells, cells: cells} = cells_node
       chars = Enum.map(Enum.take(cells, 5), fn c -> c.cell.char end)
       assert chars == ["H", "e", "l", "l", "o"]
     end
@@ -188,7 +203,8 @@ defmodule TermUI.Widget.TextInputTest do
       {:ok, state} = TextInput.init(props)
       result = TextInput.render(state, @area)
 
-      assert %RenderNode{type: :cells, cells: cells} = result
+      cells_node = extract_cells_node(result)
+      assert %RenderNode{type: :cells, cells: cells} = cells_node
       char_list = Enum.map(cells, & &1.cell.char)
       chars = char_list |> Enum.join() |> String.trim()
       assert String.starts_with?(chars, "Enter name...")
@@ -205,7 +221,8 @@ defmodule TermUI.Widget.TextInputTest do
       state = %{state | cursor: 2}
       result = TextInput.render(state, @area)
 
-      assert %RenderNode{type: :cells, cells: cells} = result
+      cells_node = extract_cells_node(result)
+      assert %RenderNode{type: :cells, cells: cells} = cells_node
       cursor_cell = Enum.at(cells, 2)
       assert cursor_cell.cell.fg == :black
       assert cursor_cell.cell.bg == :white
@@ -216,7 +233,8 @@ defmodule TermUI.Widget.TextInputTest do
       {:ok, state} = TextInput.init(props)
       result = TextInput.render(state, @area)
 
-      assert %RenderNode{type: :cells, cells: cells} = result
+      cells_node = extract_cells_node(result)
+      assert %RenderNode{type: :cells, cells: cells} = cells_node
       # Non-cursor cells should have custom style
       first_cell = hd(cells)
       assert first_cell.cell.fg == :blue
@@ -227,7 +245,8 @@ defmodule TermUI.Widget.TextInputTest do
       {:ok, state} = TextInput.init(props)
       result = TextInput.render(state, @area)
 
-      assert %RenderNode{type: :cells, cells: cells} = result
+      cells_node = extract_cells_node(result)
+      assert %RenderNode{type: :cells, cells: cells} = cells_node
       assert length(cells) == 20
     end
 
@@ -237,7 +256,8 @@ defmodule TermUI.Widget.TextInputTest do
       # cursor at end (36), area width is 20
       result = TextInput.render(state, @area)
 
-      assert %RenderNode{type: :cells, cells: cells} = result
+      cells_node = extract_cells_node(result)
+      assert %RenderNode{type: :cells, cells: cells} = cells_node
       # Should show end of string
       char_list = Enum.map(cells, & &1.cell.char)
       chars = char_list |> Enum.join() |> String.trim()
@@ -250,21 +270,55 @@ defmodule TermUI.Widget.TextInputTest do
       state = %{state | cursor: 0, scroll_offset: 10}
       result = TextInput.render(state, @area)
 
-      assert %RenderNode{type: :cells, cells: cells} = result
+      cells_node = extract_cells_node(result)
+      assert %RenderNode{type: :cells, cells: cells} = cells_node
       # Should show beginning
       char_list = Enum.map(cells, & &1.cell.char)
       chars = char_list |> Enum.join() |> String.trim()
       assert String.starts_with?(chars, "Long")
     end
 
-    test "no cursor shown on placeholder" do
+    test "no styled cursor shown on placeholder (cells remain gray)" do
       props = %{placeholder: "Type here..."}
       {:ok, state} = TextInput.init(props)
       result = TextInput.render(state, @area)
 
-      assert %RenderNode{type: :cells, cells: cells} = result
-      # All cells should have placeholder style (gray), no inverted cursor
+      cells_node = extract_cells_node(result)
+      assert %RenderNode{type: :cells, cells: cells} = cells_node
+      # All character cells should have placeholder style (gray)
       assert Enum.all?(cells, fn c -> c.cell.fg == :bright_black end)
+    end
+
+    test "emits cursor_hint at cursor column for non-empty value" do
+      props = %{value: "Hello"}
+      {:ok, state} = TextInput.init(props)
+      # cursor at position 3
+      state = %{state | cursor: 3}
+      result = TextInput.render(state, @area)
+
+      hint = extract_cursor_hint(result)
+      assert %RenderNode{type: :cursor_hint, cursor_pos: {0, 3}} = hint
+    end
+
+    test "emits cursor_hint at position 0 even when value is empty (placeholder)" do
+      props = %{placeholder: "Type here..."}
+      {:ok, state} = TextInput.init(props)
+      result = TextInput.render(state, @area)
+
+      hint = extract_cursor_hint(result)
+      assert %RenderNode{type: :cursor_hint, cursor_pos: {0, 0}} = hint
+    end
+
+    test "cursor_hint column follows scroll offset" do
+      props = %{value: "This is a very long text input value"}
+      {:ok, state} = TextInput.init(props)
+      # cursor at end (36), area width is 20, so scroll_offset adjusts to show end
+      result = TextInput.render(state, @area)
+
+      hint = extract_cursor_hint(result)
+      assert %RenderNode{type: :cursor_hint, cursor_pos: {0, col}} = hint
+      # cursor should be within the visible area width
+      assert col >= 0 and col < @area.width
     end
   end
 end

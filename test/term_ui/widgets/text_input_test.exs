@@ -13,6 +13,7 @@ defmodule TermUI.Widgets.TextInputTest do
     :ok
   end
 
+  alias TermUI.Component.RenderNode
   alias TermUI.Event
   alias TermUI.Widgets.TextInput
 
@@ -598,6 +599,73 @@ defmodule TermUI.Widgets.TextInputTest do
 
       result = TextInput.render(state, @default_area)
       assert result.type == :stack
+    end
+  end
+
+  describe "cursor_hint emission" do
+    defp find_cursor_hint(%RenderNode{type: :cursor_hint} = node), do: node
+
+    defp find_cursor_hint(%RenderNode{type: :stack, children: children}) do
+      Enum.find_value(children, &find_cursor_hint/1)
+    end
+
+    defp find_cursor_hint(_), do: nil
+
+    test "emits cursor_hint when focused (single-line)" do
+      props = TextInput.new(value: "Hello", width: 20)
+      {:ok, state} = TextInput.init(props)
+      state = %{state | focused: true, cursor_col: 3}
+
+      result = TextInput.render(state, @default_area)
+      hint = find_cursor_hint(result)
+
+      assert %RenderNode{type: :cursor_hint, cursor_pos: {0, 3}} = hint
+    end
+
+    test "does not emit cursor_hint when unfocused" do
+      props = TextInput.new(value: "Hello", width: 20)
+      {:ok, state} = TextInput.init(props)
+      # focused: false by default
+
+      result = TextInput.render(state, @default_area)
+      hint = find_cursor_hint(result)
+
+      assert hint == nil
+    end
+
+    test "cursor_hint row matches visible cursor row in multiline" do
+      props = TextInput.new(value: "Line1\nLine2\nLine3", multiline: true, width: 20)
+      {:ok, state} = TextInput.init(props)
+      # cursor on line index 2 (third line), scroll_offset 0 => visible row 2
+      state = %{state | focused: true, cursor_row: 2, cursor_col: 1}
+
+      result = TextInput.render(state, @default_area)
+      hint = find_cursor_hint(result)
+
+      assert %RenderNode{type: :cursor_hint, cursor_pos: {2, 1}} = hint
+    end
+
+    test "cursor_hint row accounts for scroll_offset" do
+      props = TextInput.new(value: "A\nB\nC\nD\nE\nF", multiline: true, max_visible_lines: 3, width: 20)
+      {:ok, state} = TextInput.init(props)
+      # cursor at absolute row 4 (E), scroll_offset 2 => visible row = 4 - 2 = 2
+      state = %{state | focused: true, cursor_row: 4, scroll_offset: 2, cursor_col: 0}
+
+      result = TextInput.render(state, @default_area)
+      hint = find_cursor_hint(result)
+
+      assert %RenderNode{type: :cursor_hint, cursor_pos: {2, 0}} = hint
+    end
+
+    test "no cursor_hint emitted for placeholder" do
+      props = TextInput.new(placeholder: "Enter text...", width: 20)
+      {:ok, state} = TextInput.init(props)
+      # empty + unfocused => placeholder
+
+      result = TextInput.render(state, @default_area)
+      hint = find_cursor_hint(result)
+
+      assert hint == nil
     end
   end
 

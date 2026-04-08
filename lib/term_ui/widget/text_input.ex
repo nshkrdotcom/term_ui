@@ -204,7 +204,13 @@ defmodule TermUI.Widget.TextInput do
         positioned_cell_safe(x, 0, char, cell_style)
       end)
 
-    RenderNode.cells(cells)
+    # Emit cursor_hint so the runtime can position the real terminal cursor and let
+    # it blink. The hint is placed BEFORE the cells so NodeRenderer captures it at
+    # the correct row (hint has zero dimensions and does not affect layout).
+    RenderNode.stack(:vertical, [
+      RenderNode.cursor_hint({0, cursor_pos}),
+      RenderNode.cells(cells)
+    ])
   end
 
   # Private Functions

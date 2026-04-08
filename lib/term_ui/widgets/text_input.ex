@@ -41,6 +41,7 @@ defmodule TermUI.Widgets.TextInput do
   use TermUI.StatefulComponent
 
   alias TermUI.CharacterSet
+  alias TermUI.Component.RenderNode
   alias TermUI.Event
   alias TermUI.Renderer.Style
   alias TermUI.Theme
@@ -661,11 +662,25 @@ defmodule TermUI.Widgets.TextInput do
         rendered_lines
       end
 
-    if display_height == 1 do
-      # Single line - just return the text node
-      List.first(content) || text("", base_style)
+    if state.focused do
+      # Encode full relative position so NodeRenderer resolves to correct screen coords.
+      # cursor_hint is placed first (zero height) — NodeRenderer translates
+      # {visible_row, cursor_col} to absolute {start_row + visible_row, start_col + col}.
+      visible_row = state.cursor_row - state.scroll_offset
+      hint = RenderNode.cursor_hint({visible_row, state.cursor_col})
+
+      if display_height == 1 do
+        line_node = List.first(content) || text("", base_style)
+        RenderNode.stack(:vertical, [hint, line_node])
+      else
+        stack(:vertical, [hint | content])
+      end
     else
-      stack(:vertical, content)
+      if display_height == 1 do
+        List.first(content) || text("", base_style)
+      else
+        stack(:vertical, content)
+      end
     end
   end
 

@@ -144,6 +144,28 @@ defmodule TermUI.Component.RenderNodeTest do
     end
   end
 
+  describe "cursor_hint/1" do
+    test "creates cursor hint node with position" do
+      node = RenderNode.cursor_hint({0, 5})
+      assert node.type == :cursor_hint
+      assert node.cursor_pos == {0, 5}
+    end
+
+    test "cursor hint has zero dimensions by default" do
+      node = RenderNode.cursor_hint({2, 7})
+      assert node.width == nil
+      assert node.height == nil
+      assert node.children == []
+    end
+
+    test "cursor hint stores position as {row, col} tuple" do
+      node = RenderNode.cursor_hint({3, 12})
+      {row, col} = node.cursor_pos
+      assert row == 3
+      assert col == 12
+    end
+  end
+
   describe "child_count/1" do
     test "returns 0 for text node" do
       assert RenderNode.child_count(RenderNode.text("Hello")) == 0

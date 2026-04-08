@@ -495,6 +495,10 @@ defmodule TermUI.Runtime do
         size: {cols, rows}
       )
 
+    # Terminal.hide_cursor() was already called in setup_terminal_and_buffers.
+    # Sync backend_state so hide_cursor/show_cursor idempotency checks are accurate.
+    backend_state = %{backend_state | cursor_visible: false}
+
     {:raw, backend, backend_state, nil, true, buffer_manager, {cols, rows}}
   end
 
@@ -1236,7 +1240,7 @@ defmodule TermUI.Runtime do
         end
 
       # Different rendering paths for Raw vs TTY backends
-      {cells, new_backend_state} =
+      {cells, new_backend_state, cursor_hint} =
         if state.buffer_manager do
           # Raw backend: use double buffering with diffing
           render_with_buffer_manager(render_tree, state)
@@ -1249,7 +1253,21 @@ defmodule TermUI.Runtime do
       {:ok, new_backend_state} = state.backend.draw_cells(new_backend_state, cells)
 
       # Flush any pending output
-      {:ok, ^new_backend_state} = state.backend.flush(new_backend_state)
+      {:ok, new_backend_state} = state.backend.flush(new_backend_state)
+
+      # After flush: position and show the cursor when a focused widget emitted a hint,
+      # otherwise keep it hidden so it does not appear at a stale location.
+      new_backend_state =
+        case cursor_hint do
+          {row, col} ->
+            {:ok, s} = state.backend.move_cursor(new_backend_state, {row, col})
+            {:ok, s} = state.backend.show_cursor(s)
+            s
+
+          nil ->
+            {:ok, s} = state.backend.hide_cursor(new_backend_state)
+            s
+        end
 
       %{state | dirty: false, backend_state: new_backend_state}
     else
@@ -1262,8 +1280,8 @@ defmodule TermUI.Runtime do
     # Clear current buffer
     BufferManager.clear_current(state.buffer_manager)
 
-    # Render tree to buffer
-    NodeRenderer.render_to_buffer(render_tree, state.buffer_manager)
+    # Render tree to buffer; capture cursor_hint if a focused widget emitted one
+    {_w, _h, cursor_hint} = NodeRenderer.render_to_buffer(render_tree, state.buffer_manager)
 
     # Get buffers for diffing
     current = BufferManager.get_current_buffer(state.buffer_manager)
@@ -1275,7 +1293,7 @@ defmodule TermUI.Runtime do
     # Swap buffers
     BufferManager.swap_buffers(state.buffer_manager)
 
-    {cells, state.backend_state}
+    {cells, state.backend_state, cursor_hint}
   end
 
   # Renders to TTY backend without double buffering
@@ -1290,8 +1308,8 @@ defmodule TermUI.Runtime do
     # Create temporary buffer for this frame
     case Buffer.new(rows, cols) do
       {:ok, temp_buffer} ->
-        # Render tree directly to temporary buffer (bypassing BufferManager)
-        NodeRenderer.render_to_buffer_direct(render_tree, temp_buffer)
+        # Render tree directly to temporary buffer; capture cursor_hint
+        {_w, _h, cursor_hint} = NodeRenderer.render_to_buffer_direct(render_tree, temp_buffer)
 
         # Extract all non-empty cells for TTY backend
         cells = extract_all_cells(temp_buffer)
@@ -1299,11 +1317,11 @@ defmodule TermUI.Runtime do
         # Clean up temporary buffer
         Buffer.destroy(temp_buffer)
 
-        {cells, state.backend_state}
+        {cells, state.backend_state, cursor_hint}
 
       {:error, _reason} ->
         # If buffer creation fails, render nothing
-        {[], state.backend_state}
+        {[], state.backend_state, nil}
     end
   end
 
